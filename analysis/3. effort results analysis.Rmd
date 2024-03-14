@@ -1,0 +1,653 @@
+---
+title: "Final results analysis"
+output: html_notebook
+---
+
+
+```{r load libraries}
+library(ggplot2)
+library(mgcv)
+library(raster)
+library(progress)
+library(sp)
+library(dplyr)
+library(voxel)
+library(gridExtra)
+library(here)
+library(dplyr)
+library(here)
+library(viridis)
+library(sf)
+library(stringr)
+library(ggrepel)
+```
+
+```{r load data}
+
+#set range for maps
+lonRange = c(-5.48,38.11)
+latRange = c(29.87,45.99)
+#load shapefile
+land <- st_read(here::here('shapefiles','Med_land.shp'))
+
+#load dataset of prediction
+df_pred = readRDS(here::here("data", "gridf_pred.RData")) 
+head(df_pred)
+
+#load gsas and append to predictions - solve format issues with West East Sardinia
+gsas = read_sf(here::here('shapefiles', 'GSAs_simplified.shp')) %>% 
+  select(SECT_COD, SMU_NAME) 
+
+gsas$GSA<- as.numeric(str_sub(gsas$SECT_COD, - 2))
+
+gsas = gsas %>%
+  mutate(GSA=case_when(SMU_NAME == 'Sardinia Est'~ 11.2,
+                       TRUE ~ GSA))
+
+gsa_pred = df_pred %>% 
+  left_join(gsas) %>% 
+  mutate(GSA=case_when(SMU_NAME == 'Sardinia Est'~ 11.2,
+                        SMU_NAME == 'Sardinia West' ~ 11.1,
+                        GSA == 11.1 ~ 11.1,
+                        TRUE ~ GSA), 
+          gsa= case_when(GSA == 11.1 ~ 11.1,
+                        TRUE ~ GSA))
+```
+
+```{r load reference layers }
+sf_use_s2(F)
+wgs = "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+land <- st_read(here::here('shapefiles','Med_land.shp'))
+grid.sar = read_sf(here::here("shapefiles", "med_grid_0.2.shp"))        
+
+# Create a data frame manually
+mediterranean_df <- data.frame(
+  country = c(
+    "Spain", "France", "Italy", "Croatia", 
+    "Montenegro", "Albania", "Greece", "Turkey", "Cyprus", "Syria", "Lebanon", "Israel",
+    "Palestine", "Egypt", "Libya", "Tunisia", "Algeria", "Morocco", "Malta"
+  ),
+  Lon = c(
+    -3.7492, 2.2137, 13.5674, 15.2000, 
+    19.2606, 20.1683, 21.8243, 35.2433, 33.4299, 38.9968, 35.8623, 35.7,
+    35.2406, 31.2357, 14, 9.5375, 2.2137, -5, 14.3754
+  ),
+  Lat = c(
+    40.4637, 44.6035, 41.8719, 45.1000, 
+    42.7087, 41.3275, 39.0742, 38.9637, 35.1264, 34.8021, 34.2, 31.8,
+    31, 30.8025, 31, 33, 32, 33, 36
+  )
+)
+## GSAs
+gsa = read_sf(here::here("shapefiles","GSAs_simplified.shp")) %>%
+  mutate(SECT_COD = factor(SECT_COD)) %>% filter(SECT_COD != "GSA28",SECT_COD != "GSA29", SECT_COD != "GSA30")
+gsa_na = gsa %>% filter(SECT_COD %in% c("GSA03", "GSA04",
+                                                       "GSA12", "GSA13",
+                                                       "GSA14", "GSA21",
+                                                       "GSA26", "GSA27"))
+st_crs(gsa) = wgs
+gsa_df = as.data.frame(gsa)
+ #depth stratum
+depth = read_sf(here::here("shapefiles","800_Multi.shp"))
+st_crs(depth) = wgs
+
+#borders
+
+borders = read_sf(here::here("shapefiles","world-administrative-boundaries.shp")) 
+st_crs(borders) = wgs
+borders_df = as.data.frame(borders)
+
+```
+
+
+```{r Figure 1 - AIS and SAR}
+
+#plot ais at 0.1
+x = readRDS(here::here('data',"data.ais.RData")) %>% 
+  dplyr::group_by(lon_bin,lat_bin) %>% 
+  dplyr::summarise(n=sum(fishing_hours,na.rm = T)) %>% 
+  st_drop_geometry() %>% 
+  dplyr:: filter(n>10)
+
+
+
+p1 = ggplot() +
+    geom_sf(data = depth, colour = NA, fill = "#74ccf4",  alpha=0.2,show.legend = 'polygon') +
+
+geom_tile(data = x,
+               aes(x = lon_bin, y = lat_bin, fill = n), colour = NA) +  
+              scale_fill_viridis( na.value = NA, limits=c(0,3000),oob=scales::squish,breaks=c(10,1000,2000,3000))+
+
+  geom_sf(data = land,fill='#B4B4B4', color="#B4B4B4") +
+  geom_sf(data = borders, fill = NA, size = 1,color="white",lwd=0.1) +
+  geom_text(data = mediterranean_df, aes(Lon, Lat, label = country),color="#343434",size=2)+
+  labs(title = "",
+       subtitle = "A. AIS",
+       x = "",
+       y = "",
+       fill = 'AIS fishing hours',
+       font='Arial') + 
+  theme(axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),  
+        axis.ticks.y=element_blank(),  
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    plot.margin=grid::unit(c(0,0,0,0), "mm")
+        )   + 
+  coord_sf(xlim = lonRange, ylim = latRange) 
+
+
+p1 = p1 + guides(fill = guide_colorbar(barwidth = 20, barheight = 0.5))
+
+#plot SAR at 0.1
+x = readRDS(here::here('data',"sar_raw.RData")) 
+x = x %>% dplyr::mutate(lon_bin = floor(detect_lon*10),lat_bin = floor(detect_lat*10)) %>% dplyr::group_by(lon_bin,lat_bin) %>% 
+  dplyr::summarise(n=n_distinct(detect_id),na.rm = T) %>% dplyr::mutate(lat_bin= lat_bin/10,lon_bin = lon_bin/10) %>% 
+  dplyr::filter(n>10)
+
+p2 = ggplot() +
+    geom_sf(data = depth, colour = NA, fill = "#74ccf4",  alpha=0.2,show.legend = 'polygon') +
+geom_tile(data = x,
+               aes(x = lon_bin, y = lat_bin, fill = n), colour = NA) +  
+              scale_fill_viridis( na.value = NA, limits=c(10,100),oob=scales::squish,breaks=c(10,30,60,100))+
+
+  geom_sf(data = land,fill='#B4B4B4', color="#B4B4B4") +
+  geom_sf(data = borders, fill = NA, size = 1,color="white",lwd=0.1) +
+  geom_text(data = mediterranean_df, aes(Lon, Lat, label = country),color="#343434",size=2) +
+  labs(title = "",
+       subtitle = "B. SAR",
+       x = "",
+       y = "",
+       fill = 'SAR detections',
+       font='Arial') + 
+  theme(axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),  
+        axis.ticks.y=element_blank(),  
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    plot.margin=grid::unit(c(0,0,0,0), "mm")
+        )   + 
+  coord_sf(xlim = lonRange, ylim = latRange) 
+
+
+p2 = p2 + guides(fill = guide_colorbar(barwidth = 20, barheight = 0.5))
+
+
+# final combined plot with shared legend 
+a = grid.arrange(p1, p2, nrow = 2)
+ggsave(a,filename = here::here('figures', "F1 - AIS fishing hours and SAR detections.png"),width = 20, height = 20, units = "cm")
+ggsave(a,filename = here::here('figures', "F1 - AIS fishing hours and SAR detections.tiff"),width = 20, height = 20, units = "cm",dpi=700)
+
+
+```
+
+
+
+```{r Figure 2 - SAR - AIS matching}
+
+#load sar data filter for unmatched detections and detections matched to fishing vessels
+raw.sar=readRDS(here::here("data","sar_raw.RData")) %>% filter(matched_category=='unmatched'|matched_category=='matched_fishing')
+
+#load final dataset to get our final grid later and join w matching 
+x= readRDS(here::here("data","df_final.RData"))
+
+#aggragated counts of unmatched and matched_fishing sar detections in our grid
+raw.sar$detection = 1
+
+df_points <- st_as_sf(raw.sar, coords = c("detect_lon", "detect_lat"), crs = 4326)
+
+df_filtered <- st_join(df_points, grid.sar, join = st_within) 
+
+df_filtered$id = df_filtered$FID
+
+sar.counts = data.frame(id = df_filtered$FID, 
+                        sar_n = df_filtered$detection,
+                        matching=df_filtered$matched_category)
+
+#sar.counts = sar.counts[which(!is.na(sar.counts$id)),]
+
+sar.counts = aggregate(data = sar.counts,
+                            sar_n ~ id +matching, 
+                       FUN = "sum")
+
+#plot ais - sar matching results
+matched_df = sar.counts %>% 
+  tidyr::spread(matching,sar_n) 
+
+matched_df$matched_fishing[is.na(matched_df$matched_fishing)] <- 0
+
+
+matched_df = matched_df %>% 
+  mutate(percentage = (unmatched / (matched_fishing + unmatched) * 100))
+
+x= readRDS(here::here('data', 'gridf_pred.rData'))
+  
+dudu = left_join(x,matched_df)
+
+dudu$lat<- as.numeric(as.character(dudu$lat))
+
+dudu$lon<- as.numeric(as.character(dudu$lon))
+
+
+p = ggplot() +
+  geom_tile(data = dudu,
+            aes(x = lon, y = lat, fill = percentage)) +  
+  scale_fill_viridis( na.value = '#74ccf4', limits=c(0,100),oob=scales::squish,option = "plasma")+
+  geom_sf(data = land,fill='#B4B4B4', color="#B4B4B4") +
+  geom_sf(data = gsa, fill = NA, size = 0.5,color="#B4B4B4")   +
+  
+  geom_sf(data = borders, fill = NA, size = 1,color="white",lwd=0.1) +
+  geom_text(data = mediterranean_df, aes(Lon, Lat, label = country),color="#343434",size=2)+
+  geom_text(data = gsa_df, aes(CENTER_X, CENTER_Y, label = SECT_COD),color="#343434",size=2,fontface='bold')+
+  coord_sf(xlim = lonRange, ylim = latRange) +
+  
+  labs(
+    title = "A. Percentage of SAR detections not matched with AIS",
+    x = "",
+    y = "",
+    fill = '(%) of unmatched detections',
+    font='Arial') + 
+  theme(axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),  
+        axis.ticks.y=element_blank(),  
+        panel.grid.major = element_blank(),
+        legend.position = "right",
+        plot.margin=grid::unit(c(0,0,0,0), "mm")
+  ) 
+
+p 
+
+
+  
+p1 = ggplot() +
+  geom_tile(data = filter(dudu,percentage<=90),
+            aes(x = lon, y = lat), fill = '#d65448',colour = NA) +  
+  geom_sf(data = land,fill='#B4B4B4', color="#B4B4B4") +
+  geom_sf(data = depth, colour = NA, fill = "#74ccf4",  alpha=0.2,show.legend = 'polygon') +
+  geom_sf(data = gsa, fill = NA, size = 0.5,color="#B4B4B4")   +
+  
+  geom_sf(data = borders, fill = NA, size = 1,color="white",lwd=0.1) +
+  geom_text(data = mediterranean_df, aes(Lon, Lat, label = country),color="#343434",size=2)+
+  geom_text(data = gsa_df, aes(CENTER_X, CENTER_Y, label = SECT_COD),color="#343434",size=2,fontface='bold')+
+  coord_sf(xlim = lonRange, ylim = latRange) +
+  
+  labs(
+    title = "B. Cells retained for GAM model",
+    x = "",
+    y = "",
+    fill = '',
+    font='Arial') + 
+  theme(axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),  
+        axis.ticks.y=element_blank(),  
+        panel.grid.major = element_blank(),
+        legend.position = "right",
+        plot.margin=grid::unit(c(0,0,0,0), "mm")
+  ) 
+
+
+
+
+a = grid.arrange(p, p1, nrow = 2)
+
+ggsave(a,filename = here::here('figures', "F2 - cells_section_unmatched_percentage.png"),width = 20, height = 20, units = "cm")
+
+ggsave(a,filename = here::here('figures', "F2 - cells_section_unmatched_percentage.tiff"),width = 20, height = 20, units = "cm",dpi=700)
+
+
+saveRDS(dudu,here::here("data","sar_ais_matching.RData"))
+
+```
+
+*FIGURE - 3 is in the preprocessing - aggregate all data to gris notebook
+
+*FIGURE - 4 and 5 are in the model/GAM script
+
+
+```{r Figure 6 - Map of predicted trawl fishing activity }
+
+y=readRDS(here::here("data","gridf_pred.RData"))
+
+
+y$lat<- as.numeric(as.character(y$lat))
+
+y$lon<- as.numeric(as.character(y$lon))
+
+
+p = ggplot() +
+geom_tile(data = filter(y,depth>(-1000)),
+               aes(x = lon, y = lat, fill = predicted_fishing), colour = NA) +  
+  scale_fill_viridis( na.value = NA, limits=c(10,17000),oob=scales::squish,breaks=c(10,2000,5000,8000,11000,14000,17000))+
+  geom_sf(data = land,fill='#B4B4B4', color="#B4B4B4") +
+    geom_sf(data = depth, colour = NA, fill = "#74ccf4",  alpha=0.2,show.legend = 'polygon') +
+  geom_sf(data = gsa, fill = NA, size = 0.5,color="#B4B4B4")   +
+
+  geom_sf(data = borders, fill = NA, size = 1,color="white",lwd=0.1) +
+  geom_text(data = mediterranean_df, aes(Lon, Lat, label = country),color="#343434",size=2)+
+  geom_text(data = gsa_df, aes(CENTER_X, CENTER_Y, label = SECT_COD),color="#343434",size=2,fontface='bold')+
+  coord_sf(xlim = lonRange, ylim = latRange) +
+
+    labs(
+       x = "",
+       y = "",
+       fill = 'Predicted (SAR based) Hours fishing',
+       font='Arial') + 
+    theme(axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),  
+        axis.ticks.y=element_blank(),  
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    plot.margin=grid::unit(c(0,0,0,0), "mm")
+        ) 
+
+p+ guides(fill = guide_colorbar(barwidth = 20, barheight = 0.5))
+
+
+
+ggsave(filename = here::here('figures', "F6 - map of predicted fishing activity.png"),width = 30, height = 20, units = "cm")
+ggsave(filename = here::here('figures', "F6 - map of predicted fishing activity.tiff"),width = 30, height = 20, units = "cm",dpi=700)
+
+```
+
+
+```{r Figure 7 - Logged GFCM comparison}
+registry = read.csv(here::here('data', 'GFCM_FleetRegister.csv')) %>%
+  filter(LOA>=15, Operational.status..Activity.indicator.=='Yes'| Operational.status..Activity.indicator.=='Not reported') %>%
+  group_by(GSA.1) %>% dplyr::summarise(n_vessels=n_distinct(National.registration.number))
+registry$GSA<- as.character(as.numeric(registry$GSA.1))
+
+by_gsa_effort_ais_sar = gsa_pred %>% filter(!is.na(GSA)) %>%
+  dplyr::group_by(GSA) %>% 
+  dplyr::summarise(
+    sar_predicted=sum(predicted_fishing,na.rm = TRUE),
+    ais_predicted=sum(nAIS,na.rm = TRUE)) %>%  
+  st_drop_geometry()
+
+by_gsa_effort_ais_sar= by_gsa_effort_ais_sar %>%
+  tidyr::gather(key = "Source", value = "Value", -GSA)
+
+head(by_gsa_effort_ais_sar)
+
+
+by_gsa_effort_ais_sar$GSA<- as.character(as.numeric(by_gsa_effort_ais_sar$GSA))
+
+
+join = left_join(by_gsa_effort_ais_sar,registry)
+
+join = join %>% 
+  mutate(GSA.1=case_when(GSA.1 == '11.2' ~ '11.2',
+                         GSA.1 == '11' ~ '11.1',
+                        TRUE ~ GSA),)
+join$n_vessels[is.na(join$n_vessels)] <- 0 
+
+
+
+join2 = join %>% dplyr::group_by(GSA,n_vessels) %>% dplyr::summarise()
+
+join$n_vessels <- as.numeric(join$n_vessels)
+
+coeff = 1000
+
+GSA_names = gsas %>% group_by(SMU_NAME, SECT_COD) %>% dplyr::summarise() %>% st_drop_geometry()
+GSA_names$GSA<- as.numeric((str_sub(GSA_names$SECT_COD, - 2)       )  )  
+
+GSA_names$GSA[GSA_names$SECT_COD == 'GSA112'] <- 11.2
+
+join$GSA <- as.numeric(join$GSA)
+join2$GSA <- as.numeric(join2$GSA)
+
+
+join = join %>% left_join(GSA_names) 
+join$n_vessels[is.na(join$n_vessels)] <- 0 
+
+
+join2 = join2 %>% left_join(GSA_names) 
+
+join$GSA <- paste(join$GSA, join$SMU_NAME, sep = ",")
+join2$GSA = paste(join2$GSA, join2$SMU_NAME, sep = ",")
+
+join$GSA[join$SMU_NAME == 'Sardinia West'] <- '11.1,Sardinia West'
+join2$GSA[join2$SMU_NAME == 'Sardinia West'] <- '11.1,Sardinia West'
+
+oGSA = unique(join$GSA[order(join$Value, decreasing = T)]) 
+join$GSA = factor(join$GSA, levels = oGSA)
+join2$GSA = factor(join2$GSA, levels = oGSA)
+
+
+
+my_palette = c("SAR Predicted" = "#082a54", "AIS" = "#f0c571")
+
+join$Source[join$Source == "sar_predicted"] <- "SAR Predicted"
+join$Source[join$Source == "ais_predicted"] <- "AIS"
+
+p1 = ggplot() +
+  geom_bar(stat = "identity", position = "dodge",data = join,
+       aes(y = Value, x = GSA, fill = Source),width=.5) +
+  # geom_line(data = join2,
+  #           aes(y = coeff * n_vessels, x = GSA), linewidth = 1, color = "#e02b35",
+  #           group = 1) +
+  scale_fill_manual(values = my_palette) + 
+  scale_y_continuous(trans = "log10",
+                     name = "Hours Fishing per year",
+                     # Add a second axis and specify its features
+                     # sec.axis = sec_axis(~ ./coeff,  
+                     #                     name = "Fishing capacity ( GFCM N. of vessels)")) 
+                     )+ 
+  theme_test() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      axis.title.y.right = element_text(color = "#e02b35"),
+      axis.text = element_text(family = 'Arial',
+                               color = '#848b9b',
+                               size = 14),  axis.title = element_text(family = 'Arial',
+                                face = 'bold',
+                                color = '#848b9b',
+                                size = 16))
+
+
+p1
+
+ ggsave(filename = here::here('figures', "F7 - AIS - SAR logged comparison.png"),width = 30, height = 20, units = "cm")
+ 
+  ggsave(filename = here::here('figures', "F7 - AIS - SAR logged comparison.tiff"),width = 30, height = 20, units = "cm",dpi=700)
+
+
+```
+
+
+
+```{r Figure 8 - Boxplots od observed and predited differences}
+
+dfs=df_pred
+dfs$delta = dfs$predicted_fishing - dfs$nAIS
+
+
+dfs$GSA = factor(dfs$SECT_COD, levels = sort(unique(dfs$SECT_COD)))
+
+
+dfs$deltalog = sign(dfs$delta) * log10(abs(dfs$delta))
+
+
+dfs$stratum = c("0-100m", "100-200m", "200-300m", "300-400m",
+                "400-500m", "500-600m", "600-700m", "700-800m",
+                "800-900m", "900-1000m")[findInterval(-1*dfs$depth, seq(0, 1000, by = 100))]
+
+dfs$stratum = factor(dfs$stratum,
+                     levels = c("0-100m", "100-200m", "200-300m", "300-400m",
+                                "400-500m", "500-600m", "600-700m", "700-800m",
+                                "800-900m", "900-1000m"))
+
+
+gdelta_gsa =  ggplot(data = filter(dfs, GSA %in% c("GSA03", "GSA04",
+                                                     "GSA12", "GSA13",
+                                                     "GSA14", "GSA21",
+                                                     "GSA26", "GSA27"), !is.na(stratum)), 
+                  aes(x = GSA, 
+                       y = deltalog, 
+                       group = GSA)) + 
+  geom_boxplot() +
+  theme_test() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  geom_hline(yintercept = 0, col = "orange", linetype = 2) + 
+  ggtitle("A.") + 
+  ylab("Delta (Predicted - Observed Hours fishing)")
+
+
+
+
+gdelta_depth =  ggplot(data = filter(dfs,!is.na(stratum)), 
+                       aes(x = stratum, 
+                           y = deltalog,
+                           fill = stratum)) + 
+  geom_boxplot() +
+  theme_test() + 
+  scale_fill_viridis_d("Depth", option = "mako", direction = -1) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  geom_hline(yintercept = 0, col = "orange", linetype = 2) + 
+  ggtitle("B.") + 
+  ylab("Delta (Predicted - Observed Hours fishing)") + 
+  xlab("Depth")
+
+
+
+gdelta = grid.arrange(gdelta_gsa,
+                      gdelta_depth)
+
+
+ggsave(plot = gdelta, 
+       file = here::here("figures", "F8 -Boxplot of AIS and SAR differences.png"),
+       device = "png", width = 20, height = 30, units = "cm")
+
+ggsave(plot = gdelta, 
+       file = here::here("figures", "F8 -Boxplot of AIS and SAR differences.png"),
+       device = "tiff", width = 20, height = 30, units = "cm")
+
+```
+
+
+
+```{r Figure 9 - GSA comparison with GFCM - one square option}
+
+registry = read.csv(here::here('data', 'GFCM_FleetRegister.csv')) 
+
+registry = registry%>% 
+ filter(LOA>=15, Operational.status..Activity.indicator.=='Yes'| Operational.status..Activity.indicator.=='Not reported') %>%
+  group_by(GSA.1) %>% dplyr::summarise(n_vessels=n_distinct(National.registration.number)) 
+
+registry = registry %>% mutate(perc = n_vessels / sum(registry$n_vessels)*100) 
+
+#by_gear = registry %>% group_by(Fishing.gear.1) %>% summarise(n_distinct(Vessel.name))
+
+registry$gsa <- paste(registry$GSA.1, registry$SMU_NAME, sep = "")
+
+
+registry$GSA.1 <- as.numeric(as.character(registry$GSA.1))
+
+
+
+ by_gsa_effort = gsa_pred %>% 
+  dplyr::group_by(SMU_NAME,GSA) %>% 
+  dplyr::summarise(predicted_fishing=sum(predicted_fishing,na.rm = TRUE)) 
+by_gsa_effort_perc = by_gsa_effort %>% 
+   mutate(perc_fishing = predicted_fishing / sum(by_gsa_effort$predicted_fishing)*100,)
+
+
+join = left_join(by_gsa_effort_perc,registry, by=c('GSA' = 'GSA.1'))
+
+  join$GSA_comb <- paste0('GSA',sep = '-',join$GSA)
+  
+    join = join %>% mutate(GFCM_sub=case_when(
+  GSA > 0 & GSA <= 11 ~ 'Western',
+  GSA > 11 & GSA <= 16 ~ 'Central',
+  GSA == 17 | GSA == 18 ~ 'Adriatic',
+  GSA > 18 & GSA <= 21 ~ 'Central',
+  GSA > 21 & GSA <= 27 ~ 'Eastern') )
+    
+    my_palette=c("Western"= "#2ea597", Central="#8456ce", "Eastern"="#e07941", "Adriatic"= "#3759ce" )
+  
+library(ggrepel)
+  # 1/ add text with geom_text, use nudge to nudge the text
+p1=ggplot(data=join, aes(x=perc, y=perc_fishing,fill=GFCM_sub)) +
+  geom_point(size = 4,) + 
+  geom_label_repel(label=join$GSA_comb,nudge_x = 0.3, nudge_y = 0.3,size = 4) +
+  geom_abline (slope=1, linetype = "dashed", color="Red") +
+  scale_fill_manual(values=my_palette)+
+  theme_minimal() +     
+    xlim(0, 21) +
+
+  labs(title='A.',
+    x = "% of GFCM registered fishing capacity",
+       y = "% of predicted fishing activity / Square kilometer",
+       fill="GFCM Sub region",
+       font='Arial') + theme(axis.text = element_text(family = 'Arial',
+                               color = '#848b9b',
+                               size = 14),  
+                             axis.title = element_text(family = 'Arial',
+                                face = 'bold',
+                                color = '#848b9b',
+                                size = 16),
+                             )
+p1 = p1 +guides(fill = guide_legend(override.aes = aes(label = ""))) 
+  
+
+
+by_gsa_effort = gsa_pred %>% 
+  filter(!is.na(GSA)) %>%
+  dplyr::group_by(SMU_NAME,GSA) %>% 
+  dplyr::summarise(predicted_fishing=sum(predicted_fishing,na.rm = TRUE),std.error=sum(se*2)) %>% 
+  mutate( GSA= case_when(GSA == 11 ~ 11.1,
+                        TRUE ~ GSA))
+
+by_gsa_effort = gsa_pred %>% 
+   filter(depth> (-1500)) %>%
+  dplyr::group_by(SMU_NAME,GSA) %>% 
+  dplyr::summarise(predicted_fishing=sum(predicted_fishing,na.rm = TRUE),area_km2=n_distinct(id)*22,std.error=sum(se*2)) %>%  
+   mutate(fishing_km2= predicted_fishing/area_km2,std.error=std.error/area_km2)
+ 
+
+by_gsa_effort$GSA_comb <- paste0('GSA',by_gsa_effort$GSA, sep = '-',by_gsa_effort$SMU_NAME)
+
+  library(broom)
+  library(emmeans)
+  library(ungeviz)
+  
+
+p2= ggplot(by_gsa_effort, aes(x = fishing_km2, moe = std.error, y = reorder(GSA_comb,fishing_km2))) +
+  geom_point(aes(x = fishing_km2), size = 2) +
+  geom_errorbarh(aes(xmin = fishing_km2 - std.error, xmax = fishing_km2 + std.error), height = 0.5) +
+  theme_minimal() +
+  labs(title = "B.",
+       subtitle = "",
+       x = "Predicted fishing hours / Square kilometer",
+       y = "GSAs",
+       fill = '' ) +
+  theme(axis.text = element_text(family = 'Arial',
+                               color = '#848b9b',
+                               size = 14),  
+                             axis.title = element_text(family = 'Arial',
+                                face = 'bold',
+                                color = '#848b9b',
+                                size = 14),
+                             )
+
+
+p2 
+
+a = grid.arrange(p1, p2,nrow = 2)
+
+a
+
+ggsave(a,filename = here::here('figures', "F9 - GFCM comparison and uncertainties.png"),width = 30, height = 30, units = "cm")
+ggsave(a,filename = here::here('figures', "F9 - GFCM comparison and uncertainties.tiff"),width = 30, height = 30, units = "cm",dpi=700)
+
+#inspect uncertainties manually
+uncertainties = by_gsa_effort %>% mutate(percentage_uncertainty= std.error / (fishing_km2 + std.error))
+  
+
+```
