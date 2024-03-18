@@ -1,8 +1,8 @@
-# Repository for code and data - Predicting fishing activity of trawlers in the Mediterranean Sea with remote sensing data 
+# Shedding light on trawlers fishing activity in the Mediterranean Sea with remote sensing data 
 
 In this repository all analyses and data to generate all results of Marsaglia et al. 2024 can be accessed.
 
-The overall reccomendation is to open the `r` project file in order to have the different folders and notebooks to "speak" across them
+The overall reccomendation is to open the `r` project file in order to have the different folders and notebooks to "speak" across them.
 
 A description of each folder is the following: 
 
