@@ -16,9 +16,9 @@ A description of each folder is the following:
   
 - **figures**: folder with all paper figures and where script will sa
 
-- **functions**: STI function used in notebook 1 lives here.
+- **functions**: STI function used in notebook **1.** lives here.
 
-- **model**: GAM model scripts lives here
+- **model**: GAM model script lives here
 
 - **shapefiles**: contains all shapefiles used in the analyses
 
