@@ -1,8 +1,8 @@
-# Repository for code and data - Predicting fishing activity of trawlers in the Mediterranean Sea with remote sensing data 
+# Shedding light on trawlers fishing activity in the Mediterranean Sea with remote sensing data 
 
 In this repository all analyses and data to generate all results of Marsaglia et al. 2024 can be accessed.
 
-The overall reccomendation is to open the `r` project file in order to have the different folders and notebooks to "speak" across them
+An important advise is to open the `r` project file in order to have the different folders and notebooks to "speak" across them.
 
 A description of each folder is the following: 
 
@@ -16,9 +16,9 @@ A description of each folder is the following:
   
 - **figures**: folder with all paper figures and where script will sa
 
-- **functions**: STI function used in notebook 1 lives here.
+- **functions**: STI function used in notebook **1.** lives here.
 
-- **model**: GAM model scripts lives here
+- **model**: GAM model script lives here
 
 - **shapefiles**: contains all shapefiles used in the analyses
 
