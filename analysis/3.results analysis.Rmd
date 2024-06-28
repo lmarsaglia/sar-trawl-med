@@ -25,8 +25,8 @@ library(ggrepel)
 ```{r load data}
 
 #set range for maps
-lonRange = c(-5.48,38.11)
-latRange = c(29.87,45.99)
+lonRange = c(-3.5,34.7)
+latRange = c(29.87,44.8)
 #load shapefile
 land <- st_read(here::here('shapefiles','Med_land.shp'))
 
@@ -36,7 +36,7 @@ head(df_pred)
 
 #load gsas and append to predictions - solve format issues with West East Sardinia
 gsas = read_sf(here::here('shapefiles', 'GSAs_simplified.shp')) %>% 
-  select(SECT_COD, SMU_NAME) 
+  dplyr::select(SECT_COD, SMU_NAME) 
 
 gsas$GSA<- as.numeric(str_sub(gsas$SECT_COD, - 2))
 
@@ -70,8 +70,8 @@ mediterranean_df <- data.frame(
   ),
   Lon = c(
     -3.7492, 2.2137, 13.5674, 15.2000, 
-    19.2606, 20.1683, 21.8243, 35.2433, 33.4299, 38.9968, 35.8623, 35.7,
-    35.2406, 31.2357, 14, 9.5375, 2.2137, -5, 14.3754
+    19.2606, 20.1683, 21.8243, 34.5, 33.4299, 38.9968, 35.8623, 35.7,
+    35.2406, 31.2357, 14, 9.5375, 2.2137, -4, 14.3754
   ),
   Lat = c(
     40.4637, 44.6035, 41.8719, 45.1000, 

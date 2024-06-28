@@ -1,0 +1,16 @@
+"","Model_Index","Variables_Included","Mean_MSE"
+"2",1,"sar_n",46646728.074291
+"3",2,"Gj",62954415.0003806
+"4",3,"sar_n, Gj",45513308.8109539
+"5",4,"depth",78213096.1313285
+"6",5,"sar_n, depth",44967461.1301853
+"7",6,"Gj, depth",57319048.6521705
+"8",7,"sar_n, Gj, depth",44284810.9717022
+"9",8,"distance_to_coastline",90988005.2287887
+"10",9,"sar_n, distance_to_coastline",45565774.3811149
+"11",10,"Gj, distance_to_coastline",60387949.9272566
+"12",11,"sar_n, Gj, distance_to_coastline",44720945.6924207
+"13",12,"depth, distance_to_coastline",75300145.8569421
+"14",13,"sar_n, depth, distance_to_coastline",44320011.8606622
+"15",14,"Gj, depth, distance_to_coastline",56478926.9146721
+"16",15,"sar_n, Gj, depth, distance_to_coastline",43760425.8030187

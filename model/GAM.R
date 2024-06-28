@@ -103,6 +103,21 @@ for(j in 1:ncol(model_tab)){
 
 iformula = as.formula(substr(iformula, 1, nchar(iformula) - 1))
 
+MSEs_agg <- aggregate(data = MSEs, MSE ~ Model, FUN = "mean")
+
+# model performance
+summary_table <- data.frame(
+  Model_Index = 1:nrow(model_tab),
+  Variables_Included = apply(model_tab, 1, function(row) {
+    included_vars <- vars[row == 1]
+    if (length(included_vars) > 0) paste(included_vars, collapse = ", ") else "None"
+  }),
+  Mean_MSE = MSEs_agg$MSE
+)
+
+#summary table
+write.csv(summary_table,here::here("data", "model_summary_table.csv"))
+
 gam.sar.ais <- gam(data = xy,
                    formula = iformula, 
               family = quasipoisson(link = "sqrt"))
@@ -136,7 +151,7 @@ gfit = ggplot(data = xy, aes(x = nAIS, y = predicted)) +
            label = expression(paste(R^2, "= 0.58"))) +
   annotate("text", x = 30, y = 5000, 
            label = paste("% Var Exp =", 100*round(summary(gam.sar.ais)$dev.expl, 3))) + 
-  ggtitle("A - Scatterplot comparing predicted and observed effort")
+  ggtitle("A - Scatterplot comparing predicted and observed fishing hours")
 
 gfit
 fgam1 = grid.arrange(gfit, gres, 
@@ -156,21 +171,28 @@ ggsave(plot = fgam1,
 
 g1 = plotGAM(gamFit = gam.sar.ais, smooth.cov = "sar_n") +
   geom_segment(data =test_set, aes(x =sar_n, xend = sar_n, yend = 5, y = 0)) +
-  ggtitle("Effect of SAR detections")+ xlim(0,80)
+  ggtitle("Effect of SAR detections")+ xlim(0,80) + 
+  labs(x = "SAR detections")
   
 g2 = plotGAM(gam.sar.ais, smooth.cov = "Gj") +
   geom_segment(data =test_set, aes(x =Gj, xend = Gj, yend = -25, y = -30)) +
-  ggtitle("Effect of G* index")
+  ggtitle("Effect of G* index") + 
+  labs(x = "G*")
+
 
 g3 = plotGAM(gam.sar.ais, smooth.cov = "depth") +
   geom_segment(data =test_set, aes(x =depth, xend = depth, yend = 5, y = 0)) +
-  ggtitle("Effect of Depth") + xlim(-1500,5)
+  ggtitle("Effect of Depth") + xlim(-1500,5) +
+  labs(x = "Depth (m)")
+
 
 
 g4 = plotGAM(gam.sar.ais, smooth.cov = "distance_to_coastline") +
   geom_segment(data =test_set, aes(x =distance_to_coastline, xend = distance_to_coastline, yend = 5, y = 0)) +
   scale_x_continuous(trans = "log10") + 
-  ggtitle("Effect of Distance from the coastline")
+  ggtitle("Effect of Distance from the coastline")+
+  labs(x = "Distance to coastline (m)")
+
 
 #FIGURE 5
 fgam2 = grid.arrange(g1, g2, g3, g4, nrow = 2)

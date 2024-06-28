@@ -1,0 +1,240 @@
+---
+title: "Aggregate data"
+output: html_notebook
+---
+
+
+```{r}
+library(ggplot2)
+library(mgcv)
+library(raster)
+library(progress)
+library(sp)
+library(dplyr)
+library(voxel)
+library(gridExtra)
+library(here)
+library(tidyr)
+library(here)
+library(viridis)
+library(sf)
+library(fishwatchr)
+library(stringr)
+
+lonRange = c(-5.48,38.11)
+latRange = c(29.87,45.99)
+
+#load domain grid
+domain = readRDS(here("data","domain_new.rData"))
+num_rows <- nrow(domain)
+
+# Expand the rows by replicating each row 60 times
+df_expanded <- domain %>%
+  slice(rep(1:n(), each = 60))
+
+# Create the "time" column ranging from 1 to 60
+domain_new <- df_expanded %>%
+  dplyr::group_by(id, lon, lat) %>%
+  dplyr::mutate(time = row_number())
+#load ais results
+data.ais = readRDS(here("data","data.ais.RData"))
+#load sti results
+temp = readRDS(here("data/STI_outputs","temp.RData"))
+#grid sar
+grid.sar = read_sf(here("shapefiles", "med_grid_0.2.shp"))        
+
+gridll = st_coordinates(st_centroid(grid.sar)) %>% as.data.frame()
+
+colnames(gridll) = c("lon", "lat")
+df.coo = data.frame(FID = grid.sar.fortify$id, lon = gridll$lon, lat = gridll$lat)
+                                                                                      
+```
+
+
+```{r filter ais data}
+
+sar_detections =readRDS(here("data","sar_raw.RData"))
+
+#which mmsi we detect with SAR?
+mmsi_sar=sar_detections %>% filter(matched_category=='matched_fishing') %>% dplyr::select(ssvid) %>% group_by(ssvid) %>% summarise()
+
+#filter ais data that is detected in SAR data
+data.match.filter = data.ais %>%
+  filter(ssvid %in% mmsi_sar$ssvid) 
+
+gear = data.match.filter %>% group_by(geartype) %>% 
+  summarise(fishing_hours=sum(fishing_hours),n_vessels=n_distinct(ssvid)) %>% filter(geartype %in% c('other_fishing','fishing','dredge_fishing','tuna_purse_seines','drifting_longlines','trawlers','other_purse_seines', 'purse_seines'))
+
+data.ais_filter = data.match.filter %>% group_by(geartype,lon_bin,lat_bin,month,year) %>% 
+  summarise(fishing_hours=sum(fishing_hours)) %>% 
+  filter(geartype %in% c('other_fishing','fishing','dredge_fishing','tuna_purse_seines','drifting_longlines','trawlers','other_purse_seines', 'purse_seines')) %>% group_by(lon_bin,lat_bin,month,year) %>% 
+  summarise(fishing_hours=sum(fishing_hours))
+
+
+data.ais_filter$time = 12 * (data.ais_filter$year - min(data.ais_filter$year)) + data.ais_filter$month
+
+```
+
+```{r FIGURE 3 What is the percentage of what we see in SAR according to AIS for different gear types?}
+gear %>% 
+  mutate(perc = fishing_hours / sum(fishing_hours)*100) -> gear_perc
+
+gear_perc$geartype[gear_perc$geartype == 'trawlers'] <- 'Trawlers'
+gear_perc$geartype[gear_perc$geartype == 'purse_seines'] <- 'Purse seiners'
+gear_perc$geartype[gear_perc$geartype == 'drifting_longlines'] <- 'Longlines'
+gear_perc$geartype[gear_perc$geartype == 'fishing'] <- 'Fishing - Unknown'
+gear_perc$geartype[gear_perc$geartype == 'other_purse_seines'] <- 'Purse seiners'
+gear_perc$geartype[gear_perc$geartype == 'dredge_fishing'] <- 'Dredge fishing'
+gear_perc$geartype[gear_perc$geartype == 'tuna_purse_seines'] <- 'Purse seiners'
+
+
+ggplot(gear_perc, aes(x = geartype, y = perc)) + geom_bar(stat = "identity")
+
+
+
+p <- gear_perc %>% 
+  group_by(geartype) %>% 
+  summarise(perc=sum(perc),fishing_hours=sum(fishing_hours),n_vessels=(sum(n_vessels))) %>% 
+  ggplot(aes(x = reorder(geartype, perc), y = perc,label=n_vessels)) + 
+       geom_bar(stat = "identity", fill = "#3C5488FF") +
+  geom_label() +
+       labs(title = "",
+                   subtitle = "",
+                   x = "Geartype",
+                   y = "Percentage of vessels")
+p + coord_flip() +
+  expand_limits(y = -0.01) + 
+  theme_minimal() + theme(axis.title = element_text(family = 'Arial',
+                                face = 'bold',
+                                color = '#848b9b',
+                                size = 16),
+      axis.text = element_text(family = 'Arial',
+                              color = '#848b9b',
+                              size = 14),) + scale_y_continuous(breaks = seq(0, 100, by = 10))
+
+
+ggsave(filename = here::here('figures', "F3 - SAR detections by geartype.png"),width = 30, height = 10, units = "cm")
+ggsave(filename = here::here('figures', "F3 - SAR detections by geartype.tiff"),width = 30, height = 10, units = "cm",dpi=700)
+```
+
+
+```{r aggregate ais data in 0.2 grid}
+
+df_points <- st_as_sf(data.ais_filter, coords = c("lon_bin", "lat_bin"), crs = 4326)
+
+df_filtered <- st_join(df_points, grid.sar, join = st_intersects) 
+
+df_filtered$id = df_filtered$FID
+
+ais.counts = data.frame(id = df_filtered$FID, 
+                        time = data.ais_filter$time,
+                        n = data.ais_filter$fishing_hours)
+ais.counts = aggregate(data = ais.counts,
+                            n ~ id + time, 
+                       FUN = "mean")
+
+
+
+
+ais_domain = left_join(domain_new,ais.counts,by=c('id','time'))
+
+temp$id <- as.numeric(as.character(temp$id))
+domain_ais_sti = left_join(ais_domain,temp,by=c('id'='id'))
+
+```
+
+```{r aggregate sar data in 0.2 grid}
+data.sar=readRDS(here("data","data_sar_norm.RData"))
+
+data.sar = data.sar %>%filter(year<=2021)
+
+data.sar$time = 12 * (data.sar$year - min(data.sar$year)) + data.sar$month
+
+
+
+df_points <- st_as_sf(data.sar, coords = c("lon_bin", "lat_bin"), crs = 4326)
+
+df_filtered <- st_join(df_points, grid.sar, join = st_intersects) 
+
+df_filtered$id = df_filtered$FID
+
+sar.counts = data.frame(id = df_filtered$FID, 
+                        time = data.sar$time,
+                        sar_n = data.sar$n_detections)
+sar.counts = sar.counts[which(!is.na(sar.counts$id)),]
+
+sar.counts = aggregate(data = sar.counts,
+                            sar_n ~ id +time, 
+                       FUN = "sum")
+
+
+
+
+ais_sti_sar = left_join(ais_sti,sar.counts, by = c('id','time'))
+
+head(ais_sti_sar)
+
+ais_sti_sar = ais_sti_sar %>% dplyr::select(id,lon.x,lat.x,n,sar_n, Gj) %>% rename('lat' = 'lat.x','lon' = 'lon.x') 
+
+
+```
+
+
+
+```{r add gsa}
+library(hrbrthemes)
+gsas = read_sf(here('shapefiles', 'GSAs_simplified.shp'))
+wgs = "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+st_crs(gsas) = wgs
+
+df_points <- st_as_sf(ais_sti_sar, coords = c("lon", "lat"), crs = 4326)
+
+df_filtered <- st_join(df_points, gsas, join = st_intersects) 
+
+df_filtered<-df_filtered%>% 
+  dplyr::select(SMU_NAME,SECT_COD,id) %>% 
+  group_by(SMU_NAME,SECT_COD,id) %>% 
+  summarise()
+
+final_with_grid_gsa = left_join(ais_sti_sar, df_filtered) 
+
+final_with_grid_gsa$GSA<- as.numeric(str_sub(final_with_grid_gsa$SECT_COD, - 2)       )               
+
+```
+
+```{r add depth }
+library(marmap)
+bathy <- getNOAA.bathy(lon1 = min(temp$lon)-2, lon2 = max(temp$lon)+2, lat1 = min(temp$lat)-2, lat2 = max(temp$lat)+2, resolution = 10)
+points_depth <- get.depth(bathy, final_with_grid_gsa[,2:3], locator = FALSE)
+
+points_depth =points_depth %>% group_by(lon,lat,depth) %>% summarise()
+
+df_final = left_join(final_with_grid_gsa,points_depth, by=c('lon','lat')) %>% filter(depth<0)
+```
+
+```{r add distance}
+library(rmapshaper)
+
+coastline <- st_read(here('shapefiles','Med_land.shp'))
+
+coastline <- ms_simplify(coastline, keep = 0.1)  
+point_sf <- st_as_sf(df_final, coords = c("lon", "lat"), crs = 4326)
+
+distances <- st_distance(point_sf, coastline)
+df_final$distance_to_coastline <- as.numeric(distances)
+
+```
+
+
+
+```{r save final dataset}
+saveRDS(df_final,here("data", "df_final.RData"))
+```
+
+
+```{r plot with all data sources}
+
+a = grid.arrange(p1,p2,p3,p4,p5,p6,nrow=3 )
+  ggsave(a,filename = here::here('figures', "all_data_sources.png"),width = 40, height = 25, units = "cm")
+
+```
